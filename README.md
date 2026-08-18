@@ -124,7 +124,7 @@ primary filter.
 | Tab / Ctrl+G | Change grouping (`Tab:change grouping (date)` or `(project)`) |
 | Ctrl+Y / Ctrl+C / Shift+Enter | Copy the transcript |
 | Ctrl+O | Open in another installed agent |
-| Ctrl+R | Rescan sessions |
+| Ctrl+R | Rescan sessions (ignore the on-disk index) |
 | Enter | Resume the selected session (in Herdr when a session is running) |
 | Esc | Clear the filter, close the Herdr prompt, or close |
 

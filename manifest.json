@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "anagrius.resume",
   "name": "Resume AI Session",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "Thomas Anagrius",
   "license": "MIT",
   "description": "Telescope-style picker for past Claude, Codex, Grok, OpenCode, Pi, and other AI coding sessions. Select one to resume it in Herdr or a terminal.",

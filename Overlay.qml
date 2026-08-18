@@ -37,6 +37,7 @@ Item {
   property string pendingAction: ""
   property string pendingAgent: ""
   property string statusText: ""
+  property bool forceRefresh: false
   property double nowMs: Date.now()
 
   property var payload: Resume.emptyPayload()
@@ -65,6 +66,9 @@ Item {
     root.filterText = incoming.query
     root.sourceFilter = incoming.source
     root.cwdFilter = incoming.cwd
+    // Kick the scan before the rest of the overlay work so it overlaps layout.
+    root.refresh(false)
+    root.refreshHerdrStatus()
     root.selectedIndex = 0
     root.cursorActive = true
     root.previewText = ""
@@ -79,8 +83,6 @@ Item {
     root.statusText = ""
     root.nowMs = Date.now()
     root.disarmPointer()
-    root.refresh()
-    root.refreshHerdrStatus()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -105,11 +107,18 @@ Item {
     else root.open("{}")
   }
 
-  function refresh() {
+  function refresh(force) {
     root.loading = true
     root.errorText = ""
-    listProc.running = false
-    listProc.running = true
+    root.forceRefresh = force === true
+    if (listProc.running) {
+      listProc.running = false
+      Qt.callLater(function() {
+        if (root.opened) listProc.running = true
+      })
+    } else {
+      listProc.running = true
+    }
   }
 
   function applyPayload(raw) {
@@ -506,6 +515,7 @@ Item {
     id: listProc
     command: {
       var args = [root.resumeBin, "list", "--limit", "240"]
+      if (root.forceRefresh) args.push("--refresh")
       if (root.cwdFilter) { args.push("--cwd"); args.push(root.cwdFilter) }
       return args
     }
@@ -639,7 +649,7 @@ Item {
             root.setFilter(Util.editedFilter(event, root.filterText))
             event.accepted = true
           } else if (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier)) {
-            root.refresh()
+            root.refresh(true)
             event.accepted = true
           } else if (event.key === Qt.Key_Up || (event.modifiers & Qt.ControlModifier) && (event.key === Qt.Key_P || event.key === Qt.Key_K)) {
             root.select(-1)
@@ -1235,15 +1245,6 @@ Item {
             }
           }
 
-          Text {
-            anchors.centerIn: parent
-            visible: root.loading && displayModel.count === 0
-            text: "Gathering sessions…"
-            color: root.foreground
-            opacity: 0.6
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.title
-          }
         }
 
         Text {
@@ -1251,15 +1252,17 @@ Item {
           height: root.footerHeight
           text: root.statusText
             ? root.statusText
-            : (root.herdrPromptOpen
-              ? "Enter:confirm  |  ←→:pick  |  Esc:cancel"
-              : (root.handoffOpen
-                ? "Enter:start there  |  ←→:pick agent  |  Esc:cancel"
-                : (root.herdrRunning
-                  ? "Enter:resume in Herdr  |  Tab:change grouping (" + root.groupBy + ")  |  Ctrl+Y:copy  |  Ctrl+O:open in  |  Esc:close"
-                  : "Enter:resume  |  Tab:change grouping (" + root.groupBy + ")  |  Ctrl+Y:copy  |  Ctrl+O:open in  |  Esc:close")))
-          color: root.statusText ? Color.accent : root.foreground
-          opacity: root.statusText ? 0.85 : 0.42
+            : (root.loading
+              ? "Gathering sessions…"
+              : (root.herdrPromptOpen
+                ? "Enter:confirm  |  ←→:pick  |  Esc:cancel"
+                : (root.handoffOpen
+                  ? "Enter:start there  |  ←→:pick agent  |  Esc:cancel"
+                  : (root.herdrRunning
+                    ? "Enter:resume in Herdr  |  Tab:change grouping (" + root.groupBy + ")  |  Ctrl+Y:copy  |  Ctrl+O:open in  |  Esc:close"
+                    : "Enter:resume  |  Tab:change grouping (" + root.groupBy + ")  |  Ctrl+Y:copy  |  Ctrl+O:open in  |  Esc:close"))))
+          color: (root.statusText || root.loading) ? Color.accent : root.foreground
+          opacity: (root.statusText || root.loading) ? 0.85 : 0.42
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
           elide: Text.ElideRight

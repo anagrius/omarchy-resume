@@ -111,6 +111,12 @@ class PrivateFileTest(unittest.TestCase):
 
 
 class SessionIndexTest(unittest.TestCase):
+    def tearDown(self) -> None:
+        os.environ.pop("OMARCHY_RESUME_INDEX", None)
+        os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        os.environ.pop("GROK_HOME", None)
+        R.reset_index()
+
     def test_unchanged_file_is_not_reread(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -132,9 +138,76 @@ class SessionIndexTest(unittest.TestCase):
             R.reset_index()
             second = R.ClaudeAdapter().list_sessions(10)
             self.assertEqual(second[0]["title"], "first title")
-            del os.environ["OMARCHY_RESUME_INDEX"]
-            del os.environ["CLAUDE_CONFIG_DIR"]
+
+    def test_legacy_entry_without_sig_is_a_miss(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "session.jsonl"
+            path.write_text("x\n", encoding="utf-8")
+            index = R.SessionIndex(Path(raw) / "index.json")
+            index.entries[str(path)] = {
+                "mtimeNs": path.stat().st_mtime_ns,
+                "size": path.stat().st_size,
+                "source": "claude",
+                "sessions": [{"id": "stale"}],
+            }
+            sig = R.cache_signature([path])
+            self.assertIsNone(index.get(path, sig))
+
+    def test_grok_sidecar_change_invalidates_and_updates_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            os.environ["OMARCHY_RESUME_INDEX"] = str(root / "index.json")
+            os.environ["GROK_HOME"] = str(root)
             R.reset_index()
+            session = root / "sessions" / "%2Ftmp" / "abc-123"
+            session.mkdir(parents=True)
+            summary = session / "summary.json"
+            summary.write_text(
+                json.dumps(
+                    {
+                        "info": {"id": "abc-123", "cwd": "/tmp"},
+                        "generated_title": "Old title",
+                        "updated_at": "2026-08-01T00:00:00Z",
+                        "last_active_at": "2026-08-01T00:00:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            first = R.GrokAdapter().list_sessions(10)
+            self.assertEqual(first[0]["title"], "Old title")
+            first_ms = first[0]["updatedAtMs"]
+            R.session_index().save()
+            time.sleep(0.02)
+            (session / "chat_history.jsonl").write_text('{"type":"user","content":"later"}\n', encoding="utf-8")
+            R.reset_index()
+            second = R.GrokAdapter().list_sessions(10)
+            self.assertGreater(second[0]["updatedAtMs"], first_ms)
+
+    def test_refresh_rereads_same_mtime(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            os.environ["OMARCHY_RESUME_INDEX"] = str(root / "index.json")
+            os.environ["CLAUDE_CONFIG_DIR"] = str(root / "claude")
+            R.reset_index()
+            project = root / "claude" / "projects" / "-tmp-demo"
+            project.mkdir(parents=True)
+            path = project / "cached.jsonl"
+            original = json.dumps({"type": "user", "sessionId": "cached", "cwd": "/tmp/demo", "message": {"role": "user", "content": "first title"}}) + "\n"
+            path.write_text(original, encoding="utf-8")
+            adapter = R.ClaudeAdapter()
+            adapter.list_sessions(10)
+            R.session_index().save()
+            st = path.stat()
+            path.write_text(
+                json.dumps({"type": "user", "sessionId": "cached", "cwd": "/tmp/demo", "message": {"role": "user", "content": "other title"}}) + "\n",
+                encoding="utf-8",
+            )
+            os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+            R.reset_index()
+            cached = R.ClaudeAdapter().list_sessions(10)
+            self.assertEqual(cached[0]["title"], "first title")
+            refreshed = R.ClaudeAdapter().list_sessions(10, force=True)
+            self.assertEqual(refreshed[0]["title"], "other title")
 
 
 class HelpersTest(unittest.TestCase):
@@ -202,6 +275,22 @@ class GrokAdapterTest(unittest.TestCase):
             sessions = adapter.list_sessions(10)
             self.assertEqual(sessions[0]["title"], "Theme the bar")
             self.assertEqual(sessions[0]["model"], "grok-4.6")
+
+    def test_cache_files_include_transcript_sidecars(self) -> None:
+        adapter = R.GrokAdapter()
+        summary = Path("/tmp/sessions/proj/abc/summary.json")
+        files = adapter.cache_files(summary)
+        self.assertEqual(
+            files,
+            [summary, summary.parent / "chat_history.jsonl", summary.parent / "updates.jsonl"],
+        )
+
+
+class OpenCodeAdapterTest(unittest.TestCase):
+    def test_cache_files_include_wal(self) -> None:
+        adapter = R.OpenCodeAdapter()
+        db = Path("/tmp/opencode.db")
+        self.assertEqual(adapter.cache_files(db), [db, Path("/tmp/opencode.db-wal")])
 
 
 class ExternalAdapterTest(unittest.TestCase):

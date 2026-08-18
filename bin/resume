@@ -488,6 +488,30 @@ def index_path() -> Path:
     return Path(os.environ.get("XDG_CACHE_HOME", HOME / ".cache")) / "omarchy" / "resume" / "index-v1.json"
 
 
+def file_signature(path: Path) -> list[int]:
+    try:
+        stat_result = path.stat()
+        return [int(stat_result.st_mtime_ns), int(stat_result.st_size)]
+    except OSError:
+        return [0, 0]
+
+
+def cache_signature(paths: list[Path]) -> list[list[Any]]:
+    """Fingerprint the index file plus any sidecars the adapter cares about."""
+    return [[str(path), *file_signature(path)] for path in paths]
+
+
+def signature_mtime_ns(signature: list[list[Any]]) -> int:
+    newest = 0
+    for item in signature:
+        if len(item) >= 2:
+            try:
+                newest = max(newest, int(item[1]))
+            except (TypeError, ValueError):
+                continue
+    return newest
+
+
 class SessionIndex:
     def __init__(self, path: Path):
         self.path = path
@@ -503,30 +527,34 @@ class SessionIndex:
         if isinstance(entries, dict):
             self.entries = entries
 
-    def get(self, path: Path) -> list[dict[str, Any]] | None:
-        try:
-            stat_result = path.stat()
-        except OSError:
-            return None
+    def get(self, path: Path, signature: list[list[Any]]) -> list[dict[str, Any]] | None:
         hit = self.entries.get(str(path))
         if not isinstance(hit, dict):
             return None
-        if hit.get("mtimeNs") != stat_result.st_mtime_ns or hit.get("size") != stat_result.st_size:
+        if hit.get("sig") != signature:
             return None
         sessions = hit.get("sessions")
         return sessions if isinstance(sessions, list) else None
 
-    def put(self, path: Path, source: str, sessions: list[dict[str, Any]]) -> None:
-        try:
-            stat_result = path.stat()
-        except OSError:
-            return
+    def put(
+        self,
+        path: Path,
+        source: str,
+        sessions: list[dict[str, Any]],
+        signature: list[list[Any]],
+    ) -> None:
         self.entries[str(path)] = {
-            "mtimeNs": stat_result.st_mtime_ns,
-            "size": stat_result.st_size,
+            "mtimeNs": signature_mtime_ns(signature),
+            "sig": signature,
             "source": source,
             "sessions": sessions,
         }
+        self.dirty = True
+
+    def clear(self) -> None:
+        if not self.entries:
+            return
+        self.entries = {}
         self.dirty = True
 
     def prune(self, source: str, live_paths: set[str]) -> None:
@@ -569,29 +597,29 @@ def reset_index() -> None:
     _INDEX = SessionIndex(index_path())
 
 
-def cached_list(adapter: Adapter, limit: int) -> list[dict[str, Any]]:
-    files: list[tuple[float, Path]] = []
+def cached_list(adapter: Adapter, limit: int, *, force: bool = False) -> list[dict[str, Any]]:
+    files: list[tuple[int, Path, list[list[Any]]]] = []
     live: set[str] = set()
     for path in adapter.index_files():
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
+        signature = cache_signature(adapter.cache_files(path))
+        newest = signature_mtime_ns(signature)
+        if newest <= 0:
             continue
         live.add(str(path))
-        files.append((mtime, path))
+        files.append((newest, path, signature))
     files.sort(key=lambda item: item[0], reverse=True)
 
     index = session_index()
     out: list[dict[str, Any]] = []
-    for _, path in files:
-        sessions = index.get(path)
+    for _, path, signature in files:
+        sessions = None if force else index.get(path, signature)
         if sessions is None:
             sessions = adapter.summarize_file(path)
             if sessions is None:
                 sessions = []
             elif isinstance(sessions, dict):
                 sessions = [sessions]
-            index.put(path, adapter.id, sessions)
+            index.put(path, adapter.id, sessions, signature)
         for session in sessions:
             if isinstance(session, dict) and session.get("id"):
                 out.append(session)
@@ -616,11 +644,15 @@ class Adapter:
     def index_files(self) -> list[Path]:
         return []
 
+    def cache_files(self, path: Path) -> list[Path]:
+        """Files whose mtime/size must match for a cache hit on `path`."""
+        return [path]
+
     def summarize_file(self, path: Path) -> list[dict[str, Any]] | dict[str, Any] | None:
         return None
 
-    def list_sessions(self, limit: int) -> list[dict[str, Any]]:
-        return cached_list(self, limit)
+    def list_sessions(self, limit: int, *, force: bool = False) -> list[dict[str, Any]]:
+        return cached_list(self, limit, force=force)
 
     def preview(self, session_id: str, *, max_turns: int = PREVIEW_TURNS, max_chars: int = 1200) -> str:
         return ""
@@ -836,6 +868,12 @@ class GrokAdapter(Adapter):
             return []
         return list(root.glob("*/*/summary.json"))
 
+    def cache_files(self, path: Path) -> list[Path]:
+        # Grok often appends chat_history/updates without rewriting summary.json.
+        # Keying the cache on summary alone leaves a just-used session stale.
+        parent = path.parent
+        return [path, parent / "chat_history.jsonl", parent / "updates.jsonl"]
+
     def summarize_file(self, path: Path) -> list[dict[str, Any]] | None:
         record = self._summarize(path)
         return [record] if record else []
@@ -855,8 +893,11 @@ class GrokAdapter(Adapter):
         )
         snippet = str(data.get("last_turn_summary") or data.get("session_summary") or title)
         stamp = parse_iso_ms(data.get("last_active_at") or data.get("updated_at"))
-        if not stamp:
-            stamp = path.stat().st_mtime * 1000
+        for companion in self.cache_files(path):
+            try:
+                stamp = max(stamp, int(companion.stat().st_mtime * 1000))
+            except OSError:
+                continue
         return session_record(
             source=self.id,
             session_id=session_id,
@@ -1045,6 +1086,10 @@ class OpenCodeAdapter(Adapter):
     def index_files(self) -> list[Path]:
         path = self.db_path()
         return [path] if path.is_file() else []
+
+    def cache_files(self, path: Path) -> list[Path]:
+        # SQLite WAL writes often leave the main db mtime/size unchanged.
+        return [path, Path(str(path) + "-wal")]
 
     def summarize_file(self, path: Path) -> list[dict[str, Any]] | None:
         return self._query_sessions(10000)
@@ -1269,23 +1314,27 @@ def discover_external_adapters() -> dict[str, ExternalAdapter]:
             consider(path, path.name)
 
     prefix = "omarchy-agent-sessions-"
-    search_dirs: list[Path] = []
+    search_dirs: list[str] = []
+    seen_dirs: set[str] = set()
     omarchy_path = os.environ.get("OMARCHY_PATH")
     if omarchy_path:
-        search_dirs.append(Path(omarchy_path) / "bin")
+        search_dirs.append(str(Path(omarchy_path) / "bin"))
     for part in os.environ.get("PATH", "").split(os.pathsep):
         if part:
-            search_dirs.append(Path(part))
+            search_dirs.append(part)
     for directory in search_dirs:
+        if directory in seen_dirs:
+            continue
+        seen_dirs.add(directory)
         try:
-            entries = list(directory.iterdir())
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    name = entry.name
+                    if not name.startswith(prefix):
+                        continue
+                    consider(Path(entry.path), name[len(prefix) :])
         except OSError:
             continue
-        for path in entries:
-            name = path.name
-            if not name.startswith(prefix):
-                continue
-            consider(path, name[len(prefix) :])
 
     return found
 
@@ -1536,6 +1585,8 @@ def filter_sessions(sessions: list[dict[str, Any]], query: str, cwd: str) -> lis
 
 
 def list_command(args: argparse.Namespace) -> int:
+    if getattr(args, "refresh", False):
+        session_index().clear()
     limit = args.limit or limit_from_env()
     sources = collect_sources()
     wanted = args.source or ""
@@ -1552,7 +1603,7 @@ def list_command(args: argparse.Namespace) -> int:
             row["sessionCount"] = 0
             source_payload.append(row)
             continue
-        found = adapter.list_sessions(limit)
+        found = adapter.list_sessions(limit, force=bool(getattr(args, "refresh", False)))
         row["sessionCount"] = len(found)
         source_payload.append(row)
         sessions.extend(found)
@@ -2208,6 +2259,11 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--source", default="")
     listing.add_argument("--cwd", default="")
     listing.add_argument("--limit", type=int, default=0)
+    listing.add_argument(
+        "--refresh",
+        action="store_true",
+        help="ignore the on-disk session index and rescan every source file",
+    )
     listing.set_defaults(func=list_command)
 
     preview = sub.add_parser("preview", help="print a session transcript")
