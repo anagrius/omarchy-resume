@@ -410,6 +410,56 @@ class LaunchDirTest(unittest.TestCase):
         self.assertEqual(R.resolved_workdir("/definitely-not-a-dir"), str(Path.home()))
 
 
+class OpenCodeResumeTest(unittest.TestCase):
+    def test_resume_plan_uses_session_option(self) -> None:
+        adapter = R.OpenCodeAdapter()
+        adapter.list_sessions = lambda _limit: [{"id": "session-1", "cwd": "/tmp"}]  # type: ignore[method-assign]
+        self.assertEqual(
+            adapter.resume_plan("session-1")["command"],
+            ["opencode", "--auto", "--session", "session-1"],
+        )
+
+
+class HerdrSessionFocusTest(unittest.TestCase):
+    def test_focuses_pane_with_matching_native_session(self) -> None:
+        calls: list[list[str]] = []
+        original = R.herdr_json
+
+        def fake_herdr_json(args, _session, timeout=20):
+            calls.append(args)
+            if args == ["agent", "list"]:
+                return {"result": {"agents": [{"pane_id": "w1:p2", "agent_session": {"value": "session-1"}}]}}
+            return {}
+
+        R.herdr_json = fake_herdr_json
+        try:
+            self.assertTrue(R.focus_herdr_session({"name": "default"}, "session-1"))
+        finally:
+            R.herdr_json = original
+
+        self.assertEqual(calls, [["agent", "list"], ["agent", "focus", "w1:p2"]])
+
+    def test_focuses_pane_with_matching_opencode_arguments(self) -> None:
+        calls: list[list[str]] = []
+        original = R.herdr_json
+
+        def fake_herdr_json(args, _session, timeout=20):
+            calls.append(args)
+            if args == ["agent", "list"]:
+                return {"result": {"agents": [{"pane_id": "w1:p2"}]}}
+            if args == ["pane", "process-info", "--pane", "w1:p2"]:
+                return {"result": {"process_info": {"foreground_processes": [{"argv": ["opencode", "--auto", "--session", "session-1"]}]}}}
+            return {}
+
+        R.herdr_json = fake_herdr_json
+        try:
+            self.assertTrue(R.focus_herdr_session({"name": "default"}, "session-1"))
+        finally:
+            R.herdr_json = original
+
+        self.assertEqual(calls, [["agent", "list"], ["pane", "process-info", "--pane", "w1:p2"], ["agent", "focus", "w1:p2"]])
+
+
 class CliSmokeTest(unittest.TestCase):
     def test_herdr_status_command(self) -> None:
         proc = subprocess.run([str(RESUME), "herdr-status"], check=False, capture_output=True, text=True)

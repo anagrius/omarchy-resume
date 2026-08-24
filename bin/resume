@@ -55,7 +55,7 @@ RESUME_PREFIX: dict[str, list[str]] = {
     "claude": ["claude", "--permission-mode", "bypassPermissions", "--resume"],
     "codex": ["codex", "--dangerously-bypass-approvals-and-sandbox", "resume"],
     "grok": ["grok", "--permission-mode", "bypassPermissions", "--resume"],
-    "opencode": ["opencode", "--auto", "resume"],
+    "opencode": ["opencode", "--auto", "--session"],
     "pi": ["pi", "--session"],
     "omp": ["omp", "--auto-approve", "--session"],
     "gemini": ["gemini", "--yolo"],
@@ -1871,6 +1871,31 @@ def herdr_json(
     return data if isinstance(data, dict) else {}
 
 
+def focus_herdr_session(session: dict[str, Any], session_id: str) -> bool:
+    listing = herdr_json(["agent", "list"], session)
+    agents = (listing.get("result") or {}).get("agents") or []
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        reference = agent.get("agent_session")
+        pane_id = agent.get("pane_id")
+        if isinstance(reference, dict) and reference.get("value") == session_id and pane_id:
+            herdr_json(["agent", "focus", str(pane_id)], session)
+            return True
+        if not pane_id:
+            continue
+        process_info = herdr_json(["pane", "process-info", "--pane", str(pane_id)], session)
+        processes = ((process_info.get("result") or {}).get("process_info") or {}).get("foreground_processes") or []
+        for process in processes:
+            argv = process.get("argv") if isinstance(process, dict) else None
+            if not isinstance(argv, list) or not argv or Path(str(argv[0])).name != "opencode":
+                continue
+            if any(str(argv[index]) == "--session" and str(argv[index + 1]) == session_id for index in range(len(argv) - 1)):
+                herdr_json(["agent", "focus", str(pane_id)], session)
+                return True
+    return False
+
+
 def launch_herdr_client() -> None:
     launcher = which("omarchy-launch-terminal-herdr")
     if launcher:
@@ -2076,12 +2101,14 @@ def start_in_herdr_pane(
     herdr_json(["pane", "run", pane_id, shlex.join([str(part) for part in command])], session)
 
 
-def launch_herdr(command: list[str], cwd: str, agent_id: str, title: str = "") -> int:
+def launch_herdr(command: list[str], cwd: str, agent_id: str, title: str = "", session_id: str = "") -> int:
     workdir = resolved_workdir(cwd)
     try:
         session = ensure_herdr_session(start_if_needed=True)
         if session is None:
             raise RuntimeError("could not start a Herdr session")
+        if agent_id == "opencode" and session_id and focus_herdr_session(session, session_id):
+            return 0
         pane_id = place_in_herdr(session, workdir, title)
         if herdr_client_pids():
             focus_herdr_client()
@@ -2094,9 +2121,9 @@ def launch_herdr(command: list[str], cwd: str, agent_id: str, title: str = "") -
         return launch_terminal(command, workdir)
 
 
-def launch_plan(command: list[str], cwd: str, *, agent_id: str, title: str = "", target: str) -> int:
+def launch_plan(command: list[str], cwd: str, *, agent_id: str, title: str = "", target: str, session_id: str = "") -> int:
     if target == "herdr":
-        return launch_herdr(command, cwd, agent_id, title)
+        return launch_herdr(command, cwd, agent_id, title, session_id)
     return launch_terminal(command, cwd)
 
 
@@ -2232,6 +2259,7 @@ def resume_command(args: argparse.Namespace) -> int:
         agent_id=args.source,
         title=str(plan.get("title") or lookup_session(adapter, args.id).get("title") or args.id),
         target=resolve_launch_target(herdr=args.herdr, terminal=args.terminal),
+        session_id=args.id,
     )
 
 
