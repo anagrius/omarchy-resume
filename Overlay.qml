@@ -3,6 +3,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Resume
 
@@ -43,13 +44,13 @@ Item {
   property var payload: Resume.emptyPayload()
   property var sessions: []
 
-  property color background: Color.menu.background
-  property color foreground: Color.menu.text
-  property color border: Color.menu.border
+  property color background: Commons.Color.menu.background
+  property color foreground: Commons.Color.menu.text
+  property color border: Commons.Color.menu.border
   property var borderSpec: Border.surfaceSpec("menu", "border", border, Math.max(1, Style.space(2)))
-  property color scrim: Color.menu.scrim
-  property color selectedBackground: Color.menu.selectedBackground
-  property color selectedText: Color.menu.selectedText
+  property color scrim: Commons.Color.menu.scrim
+  property color selectedBackground: Commons.Color.menu.selectedBackground
+  property color selectedText: Commons.Color.menu.selectedText
   readonly property int cornerRadius: Style.cornerRadius
   property string fontFamily: Style.font.menuFamily
   property int contentMargin: Style.spacing.panelPadding
@@ -740,7 +741,7 @@ Item {
             height: herdrPromptMessage.implicitHeight + Style.space(72)
             anchors.centerIn: parent
             color: root.background
-            borderSpec: Border.flat(Color.accent, Style.normalBorderWidth)
+            borderSpec: Border.flat(Commons.Color.accent, Style.normalBorderWidth)
             padding: Style.space(18)
             radius: root.cornerRadius
 
@@ -799,15 +800,15 @@ Item {
                 BorderSurface {
                   width: Style.space(96)
                   height: Style.space(34)
-                  color: root.herdrPromptIndex === 1 ? Util.alpha(Color.accent, 0.18) : "transparent"
+                  color: root.herdrPromptIndex === 1 ? Util.alpha(Commons.Color.accent, 0.18) : "transparent"
                   borderSpec: Border.flat(
-                    root.herdrPromptIndex === 1 ? Color.accent : Util.alpha(Color.accent, 0.56),
+                    root.herdrPromptIndex === 1 ? Commons.Color.accent : Util.alpha(Commons.Color.accent, 0.56),
                     Style.normalBorderWidth)
                   radius: 0
                   Text {
                     anchors.centerIn: parent
                     text: "Herdr"
-                    color: root.herdrPromptIndex === 1 ? Color.accent : root.foreground
+                    color: root.herdrPromptIndex === 1 ? Commons.Color.accent : root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                   }
@@ -903,7 +904,7 @@ Item {
                     width: parent.width
                     height: visible ? Style.space(26) : 0
                     text: row.dayGroup
-                    color: Color.accent
+                    color: Commons.Color.accent
                     opacity: 0.9
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.bodySmall
@@ -926,7 +927,7 @@ Item {
                       anchors.verticalCenter: parent.verticalCenter
                       anchors.left: parent.left
                       anchors.leftMargin: Style.space(4)
-                      color: Color.accent
+                      color: Commons.Color.accent
                     }
 
                     Row {
@@ -1091,14 +1092,14 @@ Item {
                       height: Style.space(24)
                       width: openLabel.implicitWidth + Style.space(16)
                       radius: height / 2
-                      color: root.handoffOpen ? Util.alpha(Color.accent, 0.18) : Util.alpha(root.foreground, 0.06)
+                      color: root.handoffOpen ? Util.alpha(Commons.Color.accent, 0.18) : Util.alpha(root.foreground, 0.06)
                       border.width: Style.normalBorderWidth
-                      border.color: root.handoffOpen ? Util.alpha(Color.accent, 0.7) : Util.alpha(root.border, 0.2)
+                      border.color: root.handoffOpen ? Util.alpha(Commons.Color.accent, 0.7) : Util.alpha(root.border, 0.2)
                       Text {
                         id: openLabel
                         anchors.centerIn: parent
                         text: "Open in…"
-                        color: root.handoffOpen ? Color.accent : root.foreground
+                        color: root.handoffOpen ? Commons.Color.accent : root.foreground
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.bodySmall
                       }
@@ -1131,9 +1132,9 @@ Item {
                       height: Style.space(26)
                       width: targetChipLabel.implicitWidth + (mark.length > 0 ? Style.space(28) : Style.space(16))
                       radius: height / 2
-                      color: active ? Util.alpha(Color.accent, 0.18) : Util.alpha(root.foreground, 0.04)
+                      color: active ? Util.alpha(Commons.Color.accent, 0.18) : Util.alpha(root.foreground, 0.04)
                       border.width: Style.normalBorderWidth
-                      border.color: active ? Util.alpha(Color.accent, 0.7) : Util.alpha(root.border, 0.18)
+                      border.color: active ? Util.alpha(Commons.Color.accent, 0.7) : Util.alpha(root.border, 0.18)
 
                       Row {
                         anchors.centerIn: parent
@@ -1152,7 +1153,7 @@ Item {
                           id: targetChipLabel
                           anchors.verticalCenter: parent.verticalCenter
                           text: targetChip.targetName
-                          color: targetChip.active ? Color.accent : root.foreground
+                          color: targetChip.active ? Commons.Color.accent : root.foreground
                           font.family: root.fontFamily
                           font.pixelSize: Style.font.bodySmall
                         }
@@ -1213,7 +1214,7 @@ Item {
             Text {
               width: parent.width
               text: "󰑴"
-              color: Color.accent
+              color: Commons.Color.accent
               opacity: 0.85
               font.family: root.fontFamily
               font.pixelSize: Style.font.displayLarge
@@ -1261,7 +1262,7 @@ Item {
                   : (root.herdrRunning
                     ? "Enter:resume in Herdr  |  Tab:change grouping (" + root.groupBy + ")  |  Ctrl+Y:copy  |  Ctrl+O:open in  |  Esc:close"
                     : "Enter:resume  |  Tab:change grouping (" + root.groupBy + ")  |  Ctrl+Y:copy  |  Ctrl+O:open in  |  Esc:close"))))
-          color: (root.statusText || root.loading) ? Color.accent : root.foreground
+          color: (root.statusText || root.loading) ? Commons.Color.accent : root.foreground
           opacity: (root.statusText || root.loading) ? 0.85 : 0.42
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
