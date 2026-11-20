@@ -19,6 +19,36 @@ RESUME = PLUGIN / "bin" / "resume"
 R = SourceFileLoader("omarchy_resume", str(RESUME)).load_module()
 
 
+class UnmountedAutomountTest(unittest.TestCase):
+    MOUNTS = (
+        "systemd-1 /mnt/nas/home autofs rw 0 0\n"
+        "systemd-1 /mnt/nas/live autofs rw 0 0\n"
+        "//server/live /mnt/nas/live cifs rw 0 0\n"
+    )
+
+    def check(self, cwd: str) -> bool:
+        from unittest import mock
+
+        with mock.patch("builtins.open", mock.mock_open(read_data=self.MOUNTS)):
+            return R.on_unmounted_automount(cwd)
+
+    def test_unmounted_automount_is_skipped(self) -> None:
+        self.assertTrue(self.check("/mnt/nas/home/Projects/app"))
+
+    def test_mounted_automount_is_probed(self) -> None:
+        self.assertFalse(self.check("/mnt/nas/live/app"))
+
+    def test_regular_path_is_probed(self) -> None:
+        self.assertFalse(self.check("/home/user/app"))
+
+    def test_resolve_project_does_not_touch_unmounted_path(self) -> None:
+        from unittest import mock
+
+        with mock.patch.object(R, "on_unmounted_automount", return_value=True), \
+             mock.patch.object(R.Path, "resolve", side_effect=AssertionError("touched fs")):
+            self.assertEqual(R.resolve_project("/mnt/nas/home/x"), ("/mnt/nas/home/x", "/mnt/nas/home/x"))
+
+
 class ProjectResolveTest(unittest.TestCase):
     def test_plain_path_uses_folder(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

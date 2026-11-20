@@ -300,6 +300,33 @@ def infer_from_worktrees_path(start: Path) -> Path | None:
 _project_cache: dict[str, tuple[str, str]] = {}
 
 
+def on_unmounted_automount(cwd: str) -> bool:
+    """True when cwd sits under an autofs mountpoint with nothing mounted on it.
+
+    Touching such a path triggers the automount, which blocks for minutes when
+    the server (e.g. a NAS on another network) is unreachable and hangs the
+    whole session list. Local patch, not part of upstream.
+    """
+    try:
+        autofs: list[str] = []
+        mounted: set[str] = set()
+        with open("/proc/mounts") as handle:
+            for line in handle:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                if parts[2] == "autofs":
+                    autofs.append(parts[1])
+                elif parts[2] in ("cifs", "nfs", "nfs4", "smb3", "fuse.sshfs"):
+                    mounted.add(parts[1])
+    except OSError:
+        return False
+    for mountpoint in autofs:
+        if cwd == mountpoint or cwd.startswith(mountpoint.rstrip("/") + "/"):
+            return mountpoint not in mounted
+    return False
+
+
 def resolve_project(cwd: str) -> tuple[str, str]:
     """Group worktrees/workspaces of one repo together.
 
@@ -309,6 +336,8 @@ def resolve_project(cwd: str) -> tuple[str, str]:
     """
     if not cwd:
         return ("", "No folder")
+    if on_unmounted_automount(cwd):
+        return (cwd, cwd)
     try:
         start = Path(cwd).expanduser()
         try:
